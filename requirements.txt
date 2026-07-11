@@ -1,0 +1,3 @@
+# Runtime dependencies. For the test/lint tooling use:  pip install -e ".[dev]"
+numpy>=1.24
+pygame-ce>=2.4

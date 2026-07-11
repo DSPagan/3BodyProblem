@@ -1,0 +1,37 @@
+[project]
+name = "threebody"
+version = "1.0.0"
+description = "A real-time, symplectic three-body gravity simulator"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Daniel Sánchez Pagán" }]
+keywords = ["three-body-problem", "physics", "simulation", "pygame", "n-body"]
+dependencies = [
+    "numpy>=1.24",
+    "pygame-ce>=2.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.scripts]
+threebody = "threebody.app:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["threebody"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

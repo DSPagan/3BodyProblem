@@ -1,0 +1,314 @@
+"""Application shell: window, state machine and main loop.
+
+States
+------
+MENU   title screen
+EDIT   set up initial conditions by direct manipulation (drag position,
+       right-drag to set a velocity arrow); pick presets with number keys
+RUN    the simulation advances in real time (symplectic velocity Verlet)
+PAUSED frozen mid-run
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+
+import numpy as np
+import pygame
+
+from . import presets, render, ui
+from .physics import System
+from .presets import Scenario
+
+MENU, EDIT, RUN, PAUSED = "menu", "edit", "run", "paused"
+
+SPEEDS = [0.25, 0.5, 1.0, 2.0, 4.0]
+ARROW_TIME = 0.6  # a velocity arrow previews ~0.6 time units of travel
+
+PRESET_KEYS = {
+    pygame.K_1: presets.figure_eight,
+    pygame.K_2: presets.lagrange_triangle,
+    pygame.K_3: presets.sun_and_planets,
+    pygame.K_4: presets.random_cloud,
+}
+
+
+class App:
+    def __init__(self, size: tuple[int, int] = (1280, 800)) -> None:
+        pygame.init()
+        pygame.display.set_caption("The Three-Body Problem")
+        self.screen = pygame.display.set_mode(size, pygame.RESIZABLE)
+        self.clock = pygame.time.Clock()
+        self.running = True
+        self.show_help = False
+
+        self.font_title = ui.get_font(72, bold=True)
+        self.font_sub = ui.get_font(26)
+        self.font_hud = ui.get_font(19)
+        self.font_foot = ui.get_font(17)
+
+        self.state = MENU
+        self.current_factory: Callable[[], Scenario] = presets.figure_eight
+        self.scenario: Scenario | None = None
+        self.camera = render.Camera(self.screen.get_size(), 200.0)
+
+        # RUN state
+        self.sim: System | None = None
+        self.trails: list[render.Trail] = []
+        self.energy0 = 0.0
+        self.speed_index = SPEEDS.index(1.0)
+        self.base_substeps = 6
+        self.dt = 0.003
+
+        # EDIT interaction
+        self.drag_pos: int | None = None
+        self.drag_vel: int | None = None
+
+        menu_font = ui.get_font(46)
+        self.start_button = ui.Button((size[0] // 2, 470), "START", menu_font)
+
+    # -- scenario management ---------------------------------------------
+
+    def load_preset(self, factory: Callable[[], Scenario]) -> None:
+        self.current_factory = factory
+        self.scenario = factory()
+        self.camera = render.Camera(self.screen.get_size(), self.scenario.view_scale)
+        self.camera.center = self.scenario.system.center_of_mass()
+        self.state = EDIT
+        self.drag_pos = self.drag_vel = None
+
+    def start_run(self) -> None:
+        assert self.scenario is not None
+        s = self.scenario.system
+        self.sim = System(s.pos, s.vel, s.mass, G=s.G, softening=s.softening)
+        self.energy0 = self.sim.total_energy()
+        self.trails = [render.Trail() for _ in range(self.sim.n)]
+        self.camera.center = self.sim.center_of_mass()
+        self.state = RUN
+
+    def reset_to_edit(self) -> None:
+        self.state = EDIT
+        self.drag_pos = self.drag_vel = None
+
+    # -- main loop --------------------------------------------------------
+
+    def run(self) -> None:
+        while self.running:
+            for event in pygame.event.get():
+                self.handle_event(event)
+            self.update()
+            self.draw()
+            self.clock.tick(60)
+        pygame.quit()
+
+    def update(self) -> None:
+        if self.state == RUN and self.sim is not None:
+            substeps = max(1, round(self.base_substeps * SPEEDS[self.speed_index]))
+            self.sim.substeps(self.dt, substeps)
+            for i in range(self.sim.n):
+                self.trails[i].add(self.sim.pos[i])
+            self.camera.center = self.sim.center_of_mass()
+
+    # -- events -----------------------------------------------------------
+
+    def handle_event(self, event: pygame.event.Event) -> None:
+        if event.type == pygame.QUIT:
+            self.running = False
+            return
+        if event.type == pygame.VIDEORESIZE:
+            self.camera.width, self.camera.height = event.w, event.h
+            return
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_f:
+            pygame.display.toggle_fullscreen()
+            return
+
+        if self.state == MENU:
+            self._event_menu(event)
+        elif self.state == EDIT:
+            self._event_edit(event)
+        else:  # RUN or PAUSED
+            self._event_sim(event)
+
+    def _event_menu(self, event: pygame.event.Event) -> None:
+        if event.type == pygame.MOUSEBUTTONDOWN and self.start_button.hovered(event.pos):
+            self.load_preset(presets.figure_eight)
+        elif event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                self.load_preset(presets.figure_eight)
+            elif event.key == pygame.K_ESCAPE:
+                self.running = False
+
+    def _event_edit(self, event: pygame.event.Event) -> None:
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.state = MENU
+            elif event.key == pygame.K_SPACE:
+                self.start_run()
+            elif event.key == pygame.K_h:
+                self.show_help = not self.show_help
+            elif event.key in PRESET_KEYS:
+                self.load_preset(PRESET_KEYS[event.key])
+            elif event.key == pygame.K_r:
+                self.load_preset(self.current_factory)
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            idx = self._body_at(event.pos)
+            if idx is not None:
+                if event.button == 1:
+                    self.drag_pos = idx
+                elif event.button == 3:
+                    self.drag_vel = idx
+        elif event.type == pygame.MOUSEBUTTONUP:
+            self.drag_pos = self.drag_vel = None
+        elif event.type == pygame.MOUSEMOTION:
+            self._handle_edit_drag(event.pos)
+
+    def _event_sim(self, event: pygame.event.Event) -> None:
+        if event.type != pygame.KEYDOWN:
+            return
+        if event.key == pygame.K_ESCAPE:
+            self.state = MENU
+        elif event.key == pygame.K_SPACE:
+            self.state = PAUSED if self.state == RUN else RUN
+        elif event.key == pygame.K_r:
+            self.reset_to_edit()
+        elif event.key == pygame.K_h:
+            self.show_help = not self.show_help
+        elif event.key in (pygame.K_UP, pygame.K_EQUALS, pygame.K_PLUS):
+            self.speed_index = min(len(SPEEDS) - 1, self.speed_index + 1)
+        elif event.key in (pygame.K_DOWN, pygame.K_MINUS):
+            self.speed_index = max(0, self.speed_index - 1)
+
+    def _handle_edit_drag(self, mouse: tuple[int, int]) -> None:
+        assert self.scenario is not None
+        s = self.scenario.system
+        if self.drag_pos is not None:
+            s.pos[self.drag_pos] = self.camera.to_world(mouse)
+        elif self.drag_vel is not None:
+            target = self.camera.to_world(mouse)
+            s.vel[self.drag_vel] = (target - s.pos[self.drag_vel]) / ARROW_TIME
+
+    def _body_at(self, screen_pos: tuple[int, int]) -> int | None:
+        assert self.scenario is not None
+        s = self.scenario.system
+        screen = self.camera.to_screen(s.pos)
+        for i, sp in enumerate(screen):
+            reach = render.body_radius(s.mass[i]) + 8
+            if np.hypot(sp[0] - screen_pos[0], sp[1] - screen_pos[1]) <= reach:
+                return i
+        return None
+
+    # -- drawing ----------------------------------------------------------
+
+    def draw(self) -> None:
+        self.screen.fill(render.BACKGROUND)
+        if self.state == MENU:
+            self._draw_menu()
+        elif self.state == EDIT:
+            self._draw_edit()
+        else:
+            self._draw_sim(paused=self.state == PAUSED)
+        pygame.display.flip()
+
+    def _draw_menu(self) -> None:
+        w = self.screen.get_width()
+        title = self.font_title.render("The Three-Body Problem", True, render.HUD_COLOR)
+        self.screen.blit(title, title.get_rect(center=(w // 2, 260)))
+        sub = self.font_sub.render(
+            "A real-time symplectic gravity simulator", True, (150, 156, 168)
+        )
+        self.screen.blit(sub, sub.get_rect(center=(w // 2, 330)))
+        self.start_button.rect.center = (w // 2, 470)
+        self.start_button.draw(self.screen, pygame.mouse.get_pos())
+        ui.draw_footer(
+            self.screen,
+            "Enter / click START  -  Esc quits",
+            font=self.font_foot,
+        )
+
+    def _draw_edit(self) -> None:
+        assert self.scenario is not None
+        s = self.scenario.system
+        screen = self.camera.to_screen(s.pos)
+        for i in range(s.n):
+            color = render.BODY_COLORS[i % len(render.BODY_COLORS)]
+            end = self.camera.to_screen(s.pos[i] + s.vel[i] * ARROW_TIME)
+            render.draw_velocity_arrow(self.screen, screen[i], end)
+            render.draw_body(self.screen, screen[i], render.body_radius(s.mass[i]), color)
+
+        ui.draw_text_panel(
+            self.screen,
+            [
+                f"SET-UP  -  {self.scenario.name}",
+                self.scenario.description,
+                "",
+                "Left-drag a body: move    Right-drag: set velocity",
+                "Space: launch    1-4: presets    R: reset    H: help",
+            ],
+            font=self.font_hud,
+        )
+        if self.show_help:
+            self._draw_help()
+
+    def _draw_sim(self, *, paused: bool) -> None:
+        assert self.sim is not None and self.scenario is not None
+        for i in range(self.sim.n):
+            color = render.BODY_COLORS[i % len(render.BODY_COLORS)]
+            self.trails[i].draw(self.screen, self.camera, color)
+        screen = self.camera.to_screen(self.sim.pos)
+        for i in range(self.sim.n):
+            color = render.BODY_COLORS[i % len(render.BODY_COLORS)]
+            render.draw_body(self.screen, screen[i], render.body_radius(self.sim.mass[i]), color)
+
+        energy = self.sim.total_energy()
+        drift = (energy - self.energy0) / max(abs(self.energy0), 1e-12) * 100.0
+        speed = SPEEDS[self.speed_index]
+        ui.draw_text_panel(
+            self.screen,
+            [
+                f"{'PAUSED' if paused else 'RUNNING'}  -  {self.scenario.name}",
+                f"t = {self.sim.time:8.2f}      speed x{speed:g}",
+                f"energy = {energy:9.4f}   drift {drift:+.3f}%",
+                f"fps = {self.clock.get_fps():4.0f}",
+            ],
+            font=self.font_hud,
+        )
+        ui.draw_footer(
+            self.screen,
+            "Space: pause/resume    Up/Down: speed    R: back to set-up    Esc: menu",
+            font=self.font_foot,
+        )
+        if self.show_help:
+            self._draw_help()
+
+    def _draw_help(self) -> None:
+        lines = [
+            "Controls",
+            "  Left-drag body ....... move it",
+            "  Right-drag body ...... set its velocity",
+            "  1 / 2 / 3 / 4 ........ figure-8 / Lagrange / sun / random",
+            "  Space ................ launch / pause",
+            "  Up / Down ............ simulation speed",
+            "  R .................... reset to set-up",
+            "  F .................... toggle fullscreen",
+            "  H .................... hide this help",
+            "  Esc .................. back to menu",
+        ]
+        w, h = self.screen.get_size()
+        panel = pygame.Surface((430, len(lines) * 24 + 24), pygame.SRCALPHA)
+        panel.fill((0, 0, 0, 170))
+        self.screen.blit(panel, (w - 450, h // 2 - panel.get_height() // 2))
+        ui.draw_text_panel(
+            self.screen,
+            lines,
+            font=self.font_hud,
+            origin=(w - 434, h // 2 - panel.get_height() // 2 + 12),
+            line_height=24,
+        )
+
+
+def main() -> None:
+    App().run()
+
+
+if __name__ == "__main__":
+    main()
