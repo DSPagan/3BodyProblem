@@ -27,6 +27,14 @@ MENU, EDIT, RUN, PAUSED = "menu", "edit", "run", "paused"
 SPEEDS = [0.25, 0.5, 1.0, 2.0, 4.0]
 ARROW_TIME = 0.6  # a velocity arrow previews ~0.6 time units of travel
 
+# Auto-framing: keep every body (and its trail) on screen by following the centre
+# of mass and adjusting the zoom. Zoom out fast so nothing escapes the view, zoom
+# back in slowly so the picture doesn't pulse.
+FRAME_MARGIN = 70.0  # px of padding around the content
+MIN_EXTENT = 0.35  # world units; caps how far the auto-zoom will zoom *in*
+MIN_SCALE, MAX_SCALE = 6.0, 400.0  # px per world unit
+ZOOM_IN_LERP, ZOOM_OUT_LERP = 0.03, 0.15
+
 # Number keys 1..6 -> preset factories, in this order. The pygame key *constants*
 # are only referenced after pygame.init() (in App.__init__) because the browser
 # (WebAssembly) build doesn't populate them until then.
@@ -48,6 +56,7 @@ class App:
         self.clock = pygame.time.Clock()
         self.running = True
         self.show_help = False
+        self.auto_frame = True  # auto follow + zoom to keep the bodies in view
 
         # Build the number-key -> preset map now that pygame is initialised.
         self.preset_keys = {
@@ -122,7 +131,26 @@ class App:
             self.sim.substeps(self.dt, substeps)
             for i in range(self.sim.n):
                 self.trails[i].add(self.sim.pos[i])
-            self.camera.center = self.sim.center_of_mass()
+            self._frame_camera()
+
+    def _frame_camera(self) -> None:
+        """Follow the centre of mass and (optionally) auto-zoom to fit everything."""
+        assert self.sim is not None
+        com = self.sim.center_of_mass()
+        self.camera.center = com
+        if not self.auto_frame:
+            return
+        # Farthest body or trail point from the centre of mass sets the zoom.
+        extent = MIN_EXTENT
+        for p in self.sim.pos:
+            extent = max(extent, (p - com).length())
+        for trail in self.trails:
+            for p in trail.points:
+                extent = max(extent, (p - com).length())
+        half = min(self.camera.width, self.camera.height) / 2 - FRAME_MARGIN
+        target = max(MIN_SCALE, min(MAX_SCALE, half / extent))
+        lerp = ZOOM_OUT_LERP if target < self.camera.scale else ZOOM_IN_LERP
+        self.camera.scale += (target - self.camera.scale) * lerp
 
     # -- events -----------------------------------------------------------
 
@@ -190,6 +218,8 @@ class App:
             self.reset_to_edit()
         elif event.key == pygame.K_h:
             self.show_help = not self.show_help
+        elif event.key == pygame.K_a:
+            self.auto_frame = not self.auto_frame
         elif event.key in (pygame.K_UP, pygame.K_EQUALS, pygame.K_PLUS):
             self.speed_index = min(len(SPEEDS) - 1, self.speed_index + 1)
         elif event.key in (pygame.K_DOWN, pygame.K_MINUS):
@@ -279,19 +309,20 @@ class App:
         energy = self.sim.total_energy()
         drift = (energy - self.energy0) / max(abs(self.energy0), 1e-12) * 100.0
         speed = SPEEDS[self.speed_index]
+        af = "on" if self.auto_frame else "off"
         ui.draw_text_panel(
             self.screen,
             [
                 f"{'PAUSED' if paused else 'RUNNING'}  -  {self.scenario.name}",
                 f"t = {self.sim.time:8.2f}      speed x{speed:g}",
                 f"energy = {energy:9.4f}   drift {drift:+.3f}%",
-                f"fps = {self.clock.get_fps():4.0f}",
+                f"fps = {self.clock.get_fps():4.0f}   auto-frame {af}",
             ],
             font=self.font_hud,
         )
         ui.draw_footer(
             self.screen,
-            "Space: pause/resume    Up/Down: speed    R: back to set-up    Esc: menu",
+            "Space: pause/resume   Up/Down: speed   A: auto-frame   R: set-up   Esc: menu",
             font=self.font_foot,
         )
         if self.show_help:
@@ -306,6 +337,7 @@ class App:
             "  4 5 6 ................ random / Euler / moth",
             "  Space ................ launch / pause",
             "  Up / Down ............ simulation speed",
+            "  A .................... auto-frame (follow + zoom)",
             "  R .................... reset to set-up",
             "  F .................... toggle fullscreen",
             "  H .................... hide this help",
