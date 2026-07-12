@@ -8,11 +8,12 @@ masses so the numbers stay clean.
 
 from __future__ import annotations
 
+import math
+import random
 from dataclasses import dataclass
 
-import numpy as np
-
 from .physics import System
+from .vec import Vec2
 
 
 @dataclass
@@ -31,9 +32,9 @@ def figure_eight() -> Scenario:
     A famous stable periodic solution (period ≈ 6.3259); a strong sanity check
     that the integrator behaves, since it should retrace the same loop forever.
     """
-    p = np.array([0.97000436, -0.24308753])
-    v3 = np.array([-0.93240737, -0.86473146])
-    positions = [-p, p, [0.0, 0.0]]
+    p = Vec2(0.97000436, -0.24308753)
+    v3 = Vec2(-0.93240737, -0.86473146)
+    positions = [-p, p, Vec2(0.0, 0.0)]
     velocities = [-v3 / 2, -v3 / 2, v3]
     system = System(positions, velocities, [1.0, 1.0, 1.0], G=1.0, softening=0.0)
     return Scenario(
@@ -51,11 +52,12 @@ def lagrange_triangle(radius: float = 1.0) -> Scenario:
     A circular central configuration: the tangential speed is derived so gravity
     exactly supplies the centripetal force, ``v = sqrt(G m / (sqrt(3) R))``.
     """
-    angles = np.deg2rad([90.0, 210.0, 330.0])
-    positions = radius * np.column_stack([np.cos(angles), np.sin(angles)])
-    speed = np.sqrt(1.0 / (np.sqrt(3.0) * radius))  # G = m = 1
-    tangential = np.column_stack([-np.sin(angles), np.cos(angles)])
-    velocities = speed * tangential
+    speed = math.sqrt(1.0 / (math.sqrt(3.0) * radius))  # G = m = 1
+    positions, velocities = [], []
+    for deg in (90.0, 210.0, 330.0):
+        a = math.radians(deg)
+        positions.append(Vec2(radius * math.cos(a), radius * math.sin(a)))
+        velocities.append(Vec2(-speed * math.sin(a), speed * math.cos(a)))
     system = System(positions, velocities, [1.0, 1.0, 1.0], G=1.0, softening=0.0)
     return Scenario(
         key="lagrange",
@@ -74,9 +76,9 @@ def euler_collinear(a: float = 1.0) -> Scenario:
     must satisfy ``omega^2 = (5/4) G m / a^3`` (the outer bodies feel a pull of
     ``G m^2 / a^2`` from the centre plus ``G m^2 / (2a)^2`` from each other).
     """
-    omega = np.sqrt(1.25 / a**3)  # G = m = 1
-    positions = [[-a, 0.0], [0.0, 0.0], [a, 0.0]]
-    velocities = [[0.0, -omega * a], [0.0, 0.0], [0.0, omega * a]]
+    omega = math.sqrt(1.25 / a**3)  # G = m = 1
+    positions = [Vec2(-a, 0.0), Vec2(0.0, 0.0), Vec2(a, 0.0)]
+    velocities = [Vec2(0.0, -omega * a), Vec2(0.0, 0.0), Vec2(0.0, omega * a)]
     system = System(positions, velocities, [1.0, 1.0, 1.0], G=1.0, softening=0.0)
     return Scenario(
         key="euler",
@@ -93,8 +95,8 @@ def _suvakov(vx: float, vy: float, key: str, name: str, description: str) -> Sce
     Positions r1=(-1,0), r2=(1,0), r3=(0,0); velocities v1=v2=(vx,vy) and
     v3=(-2vx,-2vy), which gives zero total momentum and zero angular momentum.
     """
-    positions = [[-1.0, 0.0], [1.0, 0.0], [0.0, 0.0]]
-    velocities = [[vx, vy], [vx, vy], [-2.0 * vx, -2.0 * vy]]
+    positions = [Vec2(-1.0, 0.0), Vec2(1.0, 0.0), Vec2(0.0, 0.0)]
+    velocities = [Vec2(vx, vy), Vec2(vx, vy), Vec2(-2.0 * vx, -2.0 * vy)]
     system = System(positions, velocities, [1.0, 1.0, 1.0], G=1.0, softening=0.0)
     return Scenario(key=key, name=name, description=description, system=system, view_scale=185.0)
 
@@ -111,16 +113,13 @@ def moth() -> Scenario:
 
 
 def sun_and_planets() -> Scenario:
-    """A heavy central body with two lighter ones on near-circular orbits.
-
-    Hierarchical and visually calm - a nice contrast to the chaotic presets.
-    """
+    """A heavy central body with two lighter ones on near-circular orbits."""
     m_sun, m_a, m_b = 50.0, 1.0, 1.0
     r_a, r_b = 1.2, 2.4
-    positions = [[0.0, 0.0], [r_a, 0.0], [-r_b, 0.0]]
-    v_a = np.sqrt(m_sun / r_a)
-    v_b = np.sqrt(m_sun / r_b)
-    velocities = [[0.0, 0.0], [0.0, v_a], [0.0, -v_b]]
+    positions = [Vec2(0.0, 0.0), Vec2(r_a, 0.0), Vec2(-r_b, 0.0)]
+    v_a = math.sqrt(m_sun / r_a)
+    v_b = math.sqrt(m_sun / r_b)
+    velocities = [Vec2(0.0, 0.0), Vec2(0.0, v_a), Vec2(0.0, -v_b)]
     system = System(positions, velocities, [m_sun, m_a, m_b], G=1.0, softening=0.05)
     system.recenter_momentum()  # keep the centre of mass fixed on screen
     return Scenario(
@@ -134,10 +133,10 @@ def sun_and_planets() -> Scenario:
 
 def random_cloud(seed: int | None = None) -> Scenario:
     """Three random bodies with zero net momentum - usually chaotic, often fun."""
-    rng = np.random.default_rng(seed)
-    positions = rng.uniform(-1.5, 1.5, size=(3, 2))
-    velocities = rng.uniform(-0.4, 0.4, size=(3, 2))
-    masses = rng.uniform(0.8, 1.5, size=3)
+    rng = random.Random(seed)
+    positions = [Vec2(rng.uniform(-1.5, 1.5), rng.uniform(-1.5, 1.5)) for _ in range(3)]
+    velocities = [Vec2(rng.uniform(-0.4, 0.4), rng.uniform(-0.4, 0.4)) for _ in range(3)]
+    masses = [rng.uniform(0.8, 1.5) for _ in range(3)]
     system = System(positions, velocities, masses, G=1.0, softening=0.05)
     system.recenter_momentum()
     return Scenario(

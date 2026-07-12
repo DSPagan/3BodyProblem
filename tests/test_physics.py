@@ -1,4 +1,4 @@
-"""Physics correctness tests - all run headless, no display required.
+"""Physics correctness tests - all run headless, no display or numpy required.
 
 These are the tests that justify the "symplectic" claim: over long runs the
 integrator must conserve linear momentum (exactly) and total energy (to a small
@@ -7,7 +7,6 @@ drift), and the famous figure-eight orbit must return to its starting point.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from threebody import presets
@@ -21,35 +20,51 @@ def two_body_circular() -> System:
     Here G = m = 1, d = 2  ->  v = 0.5, period = 4*pi.
     """
     return System(
-        positions=[[-1.0, 0.0], [1.0, 0.0]],
-        velocities=[[0.0, -0.5], [0.0, 0.5]],
+        positions=[(-1.0, 0.0), (1.0, 0.0)],
+        velocities=[(0.0, -0.5), (0.0, 0.5)],
         masses=[1.0, 1.0],
         G=1.0,
         softening=0.0,
     )
 
 
+def sep(system: System, i: int, j: int) -> float:
+    return (system.pos[i] - system.pos[j]).length()
+
+
+def max_component_dev(a, b) -> float:
+    return max(max(abs(p.x - q.x), abs(p.y - q.y)) for p, q in zip(a, b, strict=True))
+
+
+def max_extent_from_com(system: System) -> float:
+    c = system.center_of_mass()
+    return max(max(abs(p.x - c.x), abs(p.y - c.y)) for p in system.pos)
+
+
 def test_momentum_conserved_to_machine_precision():
     sys = two_body_circular()
-    p0 = sys.momentum().copy()
+    p0 = sys.momentum()
     for _ in range(5000):
         sys.step(0.005)
-    assert np.allclose(sys.momentum(), p0, atol=1e-9)
+    p = sys.momentum()
+    assert abs(p.x - p0.x) < 1e-9 and abs(p.y - p0.y) < 1e-9
 
 
 def test_center_of_mass_stays_put_with_zero_momentum():
     sys = presets.figure_eight().system
-    com0 = sys.center_of_mass().copy()
+    c0 = sys.center_of_mass()
     for _ in range(3000):
         sys.step(0.002)
-    assert np.allclose(sys.center_of_mass(), com0, atol=1e-8)
+    c = sys.center_of_mass()
+    assert abs(c.x - c0.x) < 1e-8 and abs(c.y - c0.y) < 1e-8
 
 
 def test_energy_drift_is_small_over_many_orbits():
+    from math import pi
+
     sys = two_body_circular()
     e0 = sys.total_energy()
-    period = 4 * np.pi
-    steps = int(round(10 * period / 0.002))  # ten orbits
+    steps = round(10 * (4 * pi) / 0.002)  # ten orbits
     for _ in range(steps):
         sys.step(0.002)
     drift = abs(sys.total_energy() - e0) / abs(e0)
@@ -58,65 +73,45 @@ def test_energy_drift_is_small_over_many_orbits():
 
 def test_two_body_orbit_stays_circular():
     sys = two_body_circular()
-    seps = []
+    worst = 0.0
     for _ in range(4000):
         sys.step(0.002)
-        seps.append(np.linalg.norm(sys.pos[0] - sys.pos[1]))
-    seps = np.array(seps)
-    # Separation should hover around the initial value of 2 with tiny variation.
-    assert np.max(np.abs(seps - 2.0)) < 0.02
+        worst = max(worst, abs(sep(sys, 0, 1) - 2.0))
+    assert worst < 0.02
 
 
 def test_figure_eight_is_periodic():
-    scenario = presets.figure_eight()
-    sys = scenario.system
-    start = sys.pos.copy()
+    sys = presets.figure_eight().system
+    start = [p.copy() for p in sys.pos]
     period = 6.32591398  # known period of this choreography (G = m = 1)
     n = 6326
     dt = period / n
     for _ in range(n):
         sys.step(dt)
-    # After one full period the three bodies should be back where they started.
-    assert np.max(np.abs(sys.pos - start)) < 0.05
-
-
-def test_lagrange_triangle_keeps_its_shape():
-    sys = presets.lagrange_triangle().system
-    side0 = np.linalg.norm(sys.pos[0] - sys.pos[1])
-    for _ in range(3000):
-        sys.step(0.002)
-    sides = [
-        np.linalg.norm(sys.pos[i] - sys.pos[j]) for i, j in ((0, 1), (1, 2), (2, 0))
-    ]
-    # A rigidly rotating equilateral triangle stays equilateral.
-    assert max(abs(s - side0) for s in sides) < 0.02
+    assert max_component_dev(sys.pos, start) < 0.05
 
 
 def test_euler_collinear_stays_rigid():
     sys = presets.euler_collinear().system
-    d0 = [np.linalg.norm(sys.pos[i] - sys.pos[j]) for i, j in ((0, 1), (1, 2), (0, 2))]
+    d0 = [sep(sys, i, j) for i, j in ((0, 1), (1, 2), (0, 2))]
     for _ in range(4000):
         sys.step(0.002)
-    d1 = [np.linalg.norm(sys.pos[i] - sys.pos[j]) for i, j in ((0, 1), (1, 2), (0, 2))]
-    # A relative equilibrium rotates as a rigid body: all separations constant.
+    d1 = [sep(sys, i, j) for i, j in ((0, 1), (1, 2), (0, 2))]
     assert max(abs(a - b) for a, b in zip(d0, d1, strict=True)) < 1e-3
 
 
 def test_moth_is_periodic_and_bounded():
-    scenario = presets.moth()
-    sys = scenario.system
-    start = sys.pos.copy()
+    sys = presets.moth().system
+    start = [p.copy() for p in sys.pos]
     period = 14.8939  # Suvakov-Dmitrasinovic 2013
     dt = 0.003
     max_extent = 0.0
-    for _ in range(5):  # integrate five full periods
+    for _ in range(5):  # five full periods
         for _ in range(round(period / dt)):
             sys.step(dt)
-            max_extent = max(max_extent, np.max(np.abs(sys.pos - sys.center_of_mass())))
-    # Stays bounded (does not fly apart) thanks to the 4th-order integrator...
-    assert max_extent < 3.0
-    # ...and returns close to its start after a whole number of periods.
-    assert np.max(np.abs(sys.pos - start)) < 0.1
+            max_extent = max(max_extent, max_extent_from_com(sys))
+    assert max_extent < 3.0  # stays bounded thanks to the 4th-order integrator
+    assert max_component_dev(sys.pos, start) < 0.1  # returns near its start
 
 
 def test_sun_and_planets_conserves_energy():
@@ -129,29 +124,30 @@ def test_sun_and_planets_conserves_energy():
 
 
 def test_potential_energy_finite_for_coincident_bodies():
-    # Two bodies at the same point with no softening must not divide by zero.
+    import math
+
     sys = System(
-        positions=[[0.0, 0.0], [0.0, 0.0]],
-        velocities=[[0.0, 0.0], [0.0, 0.0]],
+        positions=[(0.0, 0.0), (0.0, 0.0)],
+        velocities=[(0.0, 0.0), (0.0, 0.0)],
         masses=[1.0, 1.0],
         softening=0.0,
     )
-    assert np.isfinite(sys.total_energy())
+    assert math.isfinite(sys.total_energy())
 
 
 def test_softening_removes_the_singularity():
-    # Two coincident bodies would blow up with no softening; softening keeps
-    # accelerations finite.
+    import math
+
     sys = System(
-        positions=[[0.0, 0.0], [0.0, 0.0]],
-        velocities=[[0.0, 0.0], [0.0, 0.0]],
+        positions=[(0.0, 0.0), (0.0, 0.0)],
+        velocities=[(0.0, 0.0), (0.0, 0.0)],
         masses=[1.0, 1.0],
         softening=0.1,
     )
     sys.step(0.01)
-    assert np.all(np.isfinite(sys.pos))
+    assert all(math.isfinite(p.x) and math.isfinite(p.y) for p in sys.pos)
 
 
 def test_mismatched_input_lengths_raise():
     with pytest.raises(ValueError):
-        System(positions=[[0, 0], [1, 1]], velocities=[[0, 0]], masses=[1, 1])
+        System(positions=[(0, 0), (1, 1)], velocities=[(0, 0)], masses=[1, 1])

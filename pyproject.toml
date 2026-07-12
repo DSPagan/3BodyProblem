@@ -8,7 +8,6 @@ license = { text = "MIT" }
 authors = [{ name = "Daniel Sánchez Pagán" }]
 keywords = ["three-body-problem", "physics", "simulation", "pygame", "n-body"]
 dependencies = [
-    "numpy>=1.24",
     "pygame-ce>=2.4",
 ]
 

@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
-# /// script
-# dependencies = ["numpy"]
-# ///
 """Entry point for the three-body simulator.
 
 Runs both as a desktop app (``python main.py``) and as the entry point for the
-WebAssembly build produced by pygbag. pygbag needs an async main loop and the
-heavy dependencies (numpy) declared up front — hence the PEP 723 header above and
-the top-level import below.
+WebAssembly build produced by pygbag. pygbag needs an async main loop, which is
+why the app loop is async (see ``threebody.app.App.run_async``). The project has
+no compiled dependencies, so the browser build is small and needs no extra setup.
 """
 import asyncio
 
-import numpy  # noqa: F401  -- imported here so the web build bundles it
+import pygame  # noqa: F401  -- imported at top level so the web (pygbag) build fully sets it up
 
 from threebody.app import App
 

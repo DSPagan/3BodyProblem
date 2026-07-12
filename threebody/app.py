@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 from collections.abc import Callable
 
-import numpy as np
 import pygame
 
 from . import presets, render, ui
@@ -27,14 +27,17 @@ MENU, EDIT, RUN, PAUSED = "menu", "edit", "run", "paused"
 SPEEDS = [0.25, 0.5, 1.0, 2.0, 4.0]
 ARROW_TIME = 0.6  # a velocity arrow previews ~0.6 time units of travel
 
-PRESET_KEYS = {
-    pygame.K_1: presets.figure_eight,
-    pygame.K_2: presets.lagrange_triangle,
-    pygame.K_3: presets.sun_and_planets,
-    pygame.K_4: presets.random_cloud,
-    pygame.K_5: presets.euler_collinear,
-    pygame.K_6: presets.moth,
-}
+# Number keys 1..6 -> preset factories, in this order. The pygame key *constants*
+# are only referenced after pygame.init() (in App.__init__) because the browser
+# (WebAssembly) build doesn't populate them until then.
+PRESET_FACTORIES = [
+    presets.figure_eight,
+    presets.lagrange_triangle,
+    presets.sun_and_planets,
+    presets.random_cloud,
+    presets.euler_collinear,
+    presets.moth,
+]
 
 
 class App:
@@ -45,6 +48,11 @@ class App:
         self.clock = pygame.time.Clock()
         self.running = True
         self.show_help = False
+
+        # Build the number-key -> preset map now that pygame is initialised.
+        self.preset_keys = {
+            pygame.K_1 + i: factory for i, factory in enumerate(PRESET_FACTORIES)
+        }
 
         self.font_title = ui.get_font(72, bold=True)
         self.font_sub = ui.get_font(26)
@@ -155,8 +163,8 @@ class App:
                 self.start_run()
             elif event.key == pygame.K_h:
                 self.show_help = not self.show_help
-            elif event.key in PRESET_KEYS:
-                self.load_preset(PRESET_KEYS[event.key])
+            elif event.key in self.preset_keys:
+                self.load_preset(self.preset_keys[event.key])
             elif event.key == pygame.K_r:
                 self.load_preset(self.current_factory)
         elif event.type == pygame.MOUSEBUTTONDOWN:
@@ -199,10 +207,10 @@ class App:
     def _body_at(self, screen_pos: tuple[int, int]) -> int | None:
         assert self.scenario is not None
         s = self.scenario.system
-        screen = self.camera.to_screen(s.pos)
-        for i, sp in enumerate(screen):
+        for i, p in enumerate(s.pos):
+            sp = self.camera.to_screen(p)
             reach = render.body_radius(s.mass[i]) + 8
-            if np.hypot(sp[0] - screen_pos[0], sp[1] - screen_pos[1]) <= reach:
+            if math.hypot(sp[0] - screen_pos[0], sp[1] - screen_pos[1]) <= reach:
                 return i
         return None
 
@@ -237,12 +245,12 @@ class App:
     def _draw_edit(self) -> None:
         assert self.scenario is not None
         s = self.scenario.system
-        screen = self.camera.to_screen(s.pos)
         for i in range(s.n):
             color = render.BODY_COLORS[i % len(render.BODY_COLORS)]
+            start = self.camera.to_screen(s.pos[i])
             end = self.camera.to_screen(s.pos[i] + s.vel[i] * ARROW_TIME)
-            render.draw_velocity_arrow(self.screen, screen[i], end)
-            render.draw_body(self.screen, screen[i], render.body_radius(s.mass[i]), color)
+            render.draw_velocity_arrow(self.screen, start, end)
+            render.draw_body(self.screen, start, render.body_radius(s.mass[i]), color)
 
         ui.draw_text_panel(
             self.screen,
@@ -263,10 +271,10 @@ class App:
         for i in range(self.sim.n):
             color = render.BODY_COLORS[i % len(render.BODY_COLORS)]
             self.trails[i].draw(self.screen, self.camera, color)
-        screen = self.camera.to_screen(self.sim.pos)
         for i in range(self.sim.n):
             color = render.BODY_COLORS[i % len(render.BODY_COLORS)]
-            render.draw_body(self.screen, screen[i], render.body_radius(self.sim.mass[i]), color)
+            pos = self.camera.to_screen(self.sim.pos[i])
+            render.draw_body(self.screen, pos, render.body_radius(self.sim.mass[i]), color)
 
         energy = self.sim.total_energy()
         drift = (energy - self.energy0) / max(abs(self.energy0), 1e-12) * 100.0
