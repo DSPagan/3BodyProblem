@@ -103,10 +103,13 @@ $$
 
 This scheme is *symplectic*: unlike naive Euler integration it does not systematically
 gain or lose energy, which is exactly what you want for orbital mechanics. The engine
-composes three such steps with **Yoshida's coefficients** ($2w_1 + w_0 = 1$,
-$w_1 = 1/(2 - 2^{1/3})$) to get a **4th-order** symplectic integrator — the same low
-energy drift at a much larger time step, which is what keeps the delicate Moth I orbit
-stable in real time. You can watch the live energy-drift readout to confirm it.
+composes three such steps with **Yoshida's coefficients**
+
+$$2w_1 + w_0 = 1, \qquad w_1 = \frac{1}{2 - 2^{1/3}}$$
+
+to get a **4th-order** symplectic integrator — the same low energy drift at a much larger
+time step, which is what keeps the delicate Moth I orbit stable in real time. You can watch
+the live energy-drift readout to confirm it.
 
 ## Tests
 
