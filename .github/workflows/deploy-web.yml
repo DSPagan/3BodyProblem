@@ -27,22 +27,16 @@ jobs:
           python-version: "3.12"
 
       - name: Install pygbag
-        run: pip install pygbag
+        run: pip install "pygbag==0.9.3"
 
-      - name: Build WebAssembly bundle
-        # Stage only the code that has to ship so the bundle stays tiny
-        # (no venv, GIF, tests, ...).
-        run: |
-          mkdir -p three-body
-          cp main.py three-body/
-          cp -r threebody three-body/
-          pygbag --build --title "The Three-Body Problem" three-body/main.py
+      - name: Build self-contained WebAssembly bundle
+        run: bash scripts/build_web.sh
 
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: three-body/build/web
+          path: .webbuild/build/web
 
   deploy:
     needs: build
