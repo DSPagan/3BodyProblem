@@ -142,6 +142,20 @@ class System:
         py = sum(m * v.y for m, v in zip(self.mass, self.vel, strict=True))
         return Vec2(px, py)
 
+    def angular_momentum(self) -> float:
+        """Total angular momentum about the centre of mass (z-component).
+
+        Computed in the centre-of-mass frame, so it is conserved regardless of any
+        net drift the bodies may have."""
+        com = self.center_of_mass()
+        total_m = sum(self.mass)
+        vcx = sum(m * v.x for m, v in zip(self.mass, self.vel, strict=True)) / total_m
+        vcy = sum(m * v.y for m, v in zip(self.mass, self.vel, strict=True)) / total_m
+        total = 0.0
+        for m, p, v in zip(self.mass, self.pos, self.vel, strict=True):
+            total += m * ((p.x - com.x) * (v.y - vcy) - (p.y - com.y) * (v.x - vcx))
+        return total
+
     def center_of_mass(self) -> Vec2:
         total = sum(self.mass)
         cx = sum(m * p.x for m, p in zip(self.mass, self.pos, strict=True)) / total

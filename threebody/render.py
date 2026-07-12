@@ -40,27 +40,47 @@ class Camera:
 
 
 class Trail:
-    """A fading poly-line following one body, stored in world coordinates."""
+    """A poly-line following one body, stored in world coordinates.
+
+    Each point remembers the body's speed there, so the trail can be brightened
+    where the body moves fast (more kinetic energy). Older segments fade toward
+    the background unless ``fade`` is off (the "trace" mode that keeps the whole
+    orbit).
+    """
 
     def __init__(self, maxlen: int = 350) -> None:
-        self.points: deque[Vec2] = deque(maxlen=maxlen)
+        self.points: deque[tuple[Vec2, float]] = deque(maxlen=maxlen)
+        self.max_speed = 1e-9
 
     def clear(self) -> None:
         self.points.clear()
+        self.max_speed = 1e-9
 
-    def add(self, world_pos: Vec2) -> None:
-        self.points.append(world_pos.copy())
+    def add(self, world_pos: Vec2, speed: float = 0.0) -> None:
+        self.points.append((world_pos.copy(), speed))
+        if speed > self.max_speed:
+            self.max_speed = speed
 
-    def draw(self, surface: pygame.Surface, camera: Camera, color: tuple[int, int, int]) -> None:
+    def draw(
+        self,
+        surface: pygame.Surface,
+        camera: Camera,
+        color: tuple[int, int, int],
+        *,
+        fade: bool = True,
+        dim: float = 1.0,
+    ) -> None:
         n = len(self.points)
         if n < 2:
             return
-        pts = [camera.to_screen(p) for p in self.points]
+        pts = [(camera.to_screen(p), s) for p, s in self.points]
+        inv_max = 1.0 / self.max_speed
         for k in range(1, n):
-            # Fade older segments toward the background (brightness fade on dark bg).
-            t = k / n
-            faded = (int(color[0] * t), int(color[1] * t), int(color[2] * t))
-            pygame.draw.aaline(surface, faded, pts[k - 1], pts[k])
+            age = k / n if fade else 1.0
+            speed = 0.35 + 0.65 * min(1.0, pts[k][1] * inv_max)  # brighter when fast
+            f = age * speed * dim
+            faded = (int(color[0] * f), int(color[1] * f), int(color[2] * f))
+            pygame.draw.aaline(surface, faded, pts[k - 1][0], pts[k][0])
 
 
 def body_radius(mass: float, base: float = 7.0) -> int:
@@ -83,6 +103,38 @@ def draw_body(
     surface.blit(glow, (x - gx, y - gx))
     pygame.draw.circle(surface, color, (x, y), radius)
     pygame.draw.circle(surface, (255, 255, 255), (x, y), max(2, radius // 3))
+
+
+def draw_sparkline(
+    surface: pygame.Surface,
+    rect: pygame.Rect,
+    values: list[float],
+    color: tuple[int, int, int],
+    rel_floor: float = 0.02,
+) -> None:
+    """A small line graph of ``values`` inside ``rect``.
+
+    The vertical scale never shrinks below ``rel_floor`` of the value's magnitude,
+    so a *conserved* quantity draws as a near-flat line instead of amplified noise.
+    """
+    bg = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+    bg.fill((255, 255, 255, 12))
+    surface.blit(bg, (rect.x, rect.y))
+    pygame.draw.rect(surface, (70, 74, 84), rect, 1)
+    n = len(values)
+    if n < 2:
+        return
+    lo, hi = min(values), max(values)
+    mid = (lo + hi) / 2
+    half = max((hi - lo) / 2, rel_floor * (abs(mid) + 1e-12))
+    pad = 4.0
+    top, bot = rect.y + 1, rect.bottom - 1
+    pts = []
+    for i, v in enumerate(values):
+        x = rect.x + pad + (rect.width - 2 * pad) * i / (n - 1)
+        y = rect.y + rect.height / 2 - (v - mid) / half * (rect.height / 2 - pad)
+        pts.append((x, max(top, min(bot, y))))
+    pygame.draw.aalines(surface, color, False, pts)
 
 
 def draw_velocity_arrow(

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import math
+from collections import deque
 from collections.abc import Callable
 
 import pygame
@@ -21,6 +22,7 @@ import pygame
 from . import presets, render, ui
 from .physics import System
 from .presets import Scenario
+from .vec import Vec2
 
 MENU, EDIT, RUN, PAUSED = "menu", "edit", "run", "paused"
 
@@ -34,6 +36,9 @@ FRAME_MARGIN = 70.0  # px of padding around the content
 MIN_EXTENT = 0.35  # world units; caps how far the auto-zoom will zoom *in*
 MIN_SCALE, MAX_SCALE = 6.0, 400.0  # px per world unit
 ZOOM_IN_LERP, ZOOM_OUT_LERP = 0.03, 0.15
+
+TRAIL_LEN, TRACE_LEN = 350, 6000  # fading trail vs "trace" (whole-orbit) length
+GHOST_EPS = 1e-3  # how far to nudge the chaos twin's starting position
 
 # Number keys 1..6 -> preset factories, in this order. The pygame key *constants*
 # are only referenced after pygame.init() (in App.__init__) because the browser
@@ -57,6 +62,7 @@ class App:
         self.running = True
         self.show_help = False
         self.auto_frame = True  # auto follow + zoom to keep the bodies in view
+        self.trace = False  # keep the whole orbit instead of a fading trail
 
         # Build the number-key -> preset map now that pygame is initialised.
         self.preset_keys = {
@@ -81,6 +87,12 @@ class App:
         self.base_substeps = 6
         self.dt = 0.003
 
+        # chaos twin + conserved-quantities panel
+        self.ghost: System | None = None
+        self.ghost_trails: list[render.Trail] = []
+        self.show_panel = False
+        self.history: deque[tuple[float, float, float]] = deque(maxlen=240)
+
         # EDIT interaction
         self.drag_pos: int | None = None
         self.drag_vel: int | None = None
@@ -98,18 +110,40 @@ class App:
         self.state = EDIT
         self.drag_pos = self.drag_vel = None
 
+    def _new_trails(self, n: int) -> list[render.Trail]:
+        maxlen = TRACE_LEN if self.trace else TRAIL_LEN
+        return [render.Trail(maxlen) for _ in range(n)]
+
     def start_run(self) -> None:
         assert self.scenario is not None
         s = self.scenario.system
         self.sim = System(s.pos, s.vel, s.mass, G=s.G, softening=s.softening)
         self.energy0 = self.sim.total_energy()
-        self.trails = [render.Trail() for _ in range(self.sim.n)]
+        self.trails = self._new_trails(self.sim.n)
+        self.ghost = None
+        self.ghost_trails = []
+        self.history.clear()
         self.camera.center = self.sim.center_of_mass()
         self.state = RUN
 
     def reset_to_edit(self) -> None:
         self.state = EDIT
+        self.ghost = None
         self.drag_pos = self.drag_vel = None
+
+    def _toggle_ghost(self) -> None:
+        """Spawn (or remove) a chaos twin: a copy nudged by a tiny epsilon."""
+        if self.sim is None:
+            return
+        if self.ghost is not None:
+            self.ghost = None
+            self.ghost_trails = []
+            return
+        pos = [p.copy() for p in self.sim.pos]
+        pos[0] = pos[0] + Vec2(GHOST_EPS, 0.0)
+        self.ghost = System(pos, self.sim.vel, self.sim.mass,
+                            G=self.sim.G, softening=self.sim.softening)
+        self.ghost_trails = self._new_trails(self.ghost.n)
 
     # -- main loop --------------------------------------------------------
 
@@ -130,7 +164,16 @@ class App:
             substeps = max(1, round(self.base_substeps * SPEEDS[self.speed_index]))
             self.sim.substeps(self.dt, substeps)
             for i in range(self.sim.n):
-                self.trails[i].add(self.sim.pos[i])
+                self.trails[i].add(self.sim.pos[i], self.sim.vel[i].length())
+            if self.ghost is not None:
+                self.ghost.substeps(self.dt, substeps)
+                for i in range(self.ghost.n):
+                    self.ghost_trails[i].add(self.ghost.pos[i], self.ghost.vel[i].length())
+            self.history.append((
+                self.sim.total_energy(),
+                self.sim.momentum().length(),
+                self.sim.angular_momentum(),
+            ))
             self._frame_camera()
 
     def _frame_camera(self) -> None:
@@ -140,12 +183,14 @@ class App:
         self.camera.center = com
         if not self.auto_frame:
             return
-        # Farthest body or trail point from the centre of mass sets the zoom.
+        # Farthest body or trail point (incl. the chaos twin) sets the zoom.
         extent = MIN_EXTENT
-        for p in self.sim.pos:
-            extent = max(extent, (p - com).length())
-        for trail in self.trails:
-            for p in trail.points:
+        systems = [self.sim] if self.ghost is None else [self.sim, self.ghost]
+        for sysm in systems:
+            for p in sysm.pos:
+                extent = max(extent, (p - com).length())
+        for trail in (*self.trails, *self.ghost_trails):
+            for p, _ in trail.points:
                 extent = max(extent, (p - com).length())
         half = min(self.camera.width, self.camera.height) / 2 - FRAME_MARGIN
         target = max(MIN_SCALE, min(MAX_SCALE, half / extent))
@@ -220,6 +265,16 @@ class App:
             self.show_help = not self.show_help
         elif event.key == pygame.K_a:
             self.auto_frame = not self.auto_frame
+        elif event.key == pygame.K_t:
+            self.trace = not self.trace
+            if self.sim is not None:
+                self.trails = self._new_trails(self.sim.n)
+                if self.ghost is not None:
+                    self.ghost_trails = self._new_trails(self.ghost.n)
+        elif event.key == pygame.K_g:
+            self._toggle_ghost()
+        elif event.key == pygame.K_p:
+            self.show_panel = not self.show_panel
         elif event.key in (pygame.K_UP, pygame.K_EQUALS, pygame.K_PLUS):
             self.speed_index = min(len(SPEEDS) - 1, self.speed_index + 1)
         elif event.key in (pygame.K_DOWN, pygame.K_MINUS):
@@ -298,9 +353,21 @@ class App:
 
     def _draw_sim(self, *, paused: bool) -> None:
         assert self.sim is not None and self.scenario is not None
+        fade = not self.trace
+
+        # The chaos twin, drawn dim, underneath.
+        if self.ghost is not None:
+            for i in range(self.ghost.n):
+                color = render.BODY_COLORS[i % len(render.BODY_COLORS)]
+                self.ghost_trails[i].draw(self.screen, self.camera, color, fade=fade, dim=0.5)
+            for i in range(self.ghost.n):
+                color = tuple(int(c * 0.55) for c in render.BODY_COLORS[i % 3])
+                gp = self.camera.to_screen(self.ghost.pos[i])
+                render.draw_body(self.screen, gp, render.body_radius(self.ghost.mass[i]), color)
+
         for i in range(self.sim.n):
             color = render.BODY_COLORS[i % len(render.BODY_COLORS)]
-            self.trails[i].draw(self.screen, self.camera, color)
+            self.trails[i].draw(self.screen, self.camera, color, fade=fade)
         for i in range(self.sim.n):
             color = render.BODY_COLORS[i % len(render.BODY_COLORS)]
             pos = self.camera.to_screen(self.sim.pos[i])
@@ -310,23 +377,47 @@ class App:
         drift = (energy - self.energy0) / max(abs(self.energy0), 1e-12) * 100.0
         speed = SPEEDS[self.speed_index]
         af = "on" if self.auto_frame else "off"
-        ui.draw_text_panel(
-            self.screen,
-            [
-                f"{'PAUSED' if paused else 'RUNNING'}  -  {self.scenario.name}",
-                f"t = {self.sim.time:8.2f}      speed x{speed:g}",
-                f"energy = {energy:9.4f}   drift {drift:+.3f}%",
-                f"fps = {self.clock.get_fps():4.0f}   auto-frame {af}",
-            ],
-            font=self.font_hud,
-        )
+        lines = [
+            f"{'PAUSED' if paused else 'RUNNING'}  -  {self.scenario.name}",
+            f"t = {self.sim.time:8.2f}      speed x{speed:g}",
+            f"energy = {energy:9.4f}   drift {drift:+.3f}%",
+            f"fps = {self.clock.get_fps():4.0f}   auto-frame {af}",
+        ]
+        if self.ghost is not None:
+            sep = max((self.sim.pos[i] - self.ghost.pos[i]).length() for i in range(self.sim.n))
+            lines.append(f"chaos twin: separation = {sep:.3g}")
+        ui.draw_text_panel(self.screen, lines, font=self.font_hud)
+
+        if self.show_panel:
+            self._draw_conserved_panel()
+
         ui.draw_footer(
             self.screen,
-            "Space: pause/resume   Up/Down: speed   A: auto-frame   R: set-up   Esc: menu",
+            "Space pause  A frame  T trace  G chaos  P panel  R set-up  H help",
             font=self.font_foot,
         )
         if self.show_help:
             self._draw_help()
+
+    def _draw_conserved_panel(self) -> None:
+        """Sparklines of energy / |momentum| / angular momentum over time."""
+        if len(self.history) < 2:
+            return
+        energy = [h[0] for h in self.history]
+        momentum = [h[1] for h in self.history]
+        angular = [h[2] for h in self.history]
+        w, h = self.screen.get_size()
+        pw, ph, gap = 190, 40, 8
+        x = w - pw - 16
+        y = h - 3 * (ph + gap) - 40
+        series = [("energy", energy, (95, 160, 255)),
+                  ("|momentum|", momentum, (80, 214, 160)),
+                  ("ang. mom.", angular, (255, 92, 108))]
+        for k, (label, values, color) in enumerate(series):
+            rect = pygame.Rect(x, y + k * (ph + gap), pw, ph)
+            render.draw_sparkline(self.screen, rect, values, color)
+            txt = self.font_foot.render(f"{label}: {values[-1]:+.4g}", True, render.HUD_COLOR)
+            self.screen.blit(txt, (rect.x, rect.y - 16))
 
     def _draw_help(self) -> None:
         lines = [
@@ -338,6 +429,9 @@ class App:
             "  Space ................ launch / pause",
             "  Up / Down ............ simulation speed",
             "  A .................... auto-frame (follow + zoom)",
+            "  T .................... trace mode (keep the orbit)",
+            "  G .................... spawn a chaos twin",
+            "  P .................... conserved-quantities panel",
             "  R .................... reset to set-up",
             "  F .................... toggle fullscreen",
             "  H .................... hide this help",
