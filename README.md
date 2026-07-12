@@ -60,12 +60,16 @@ Press **Start**, then drag the bodies to taste and hit **Space** to launch.
 ### Run it in the browser
 
 The exact same code runs in the browser via [pygbag](https://pygame-web.github.io/),
-which compiles it to WebAssembly:
+which compiles it to WebAssembly. For a quick local preview:
 
 ```bash
 pip install pygbag
 pygbag main.py        # then open http://localhost:8000
 ```
+
+The live GitHub Pages demo is built by [`scripts/build_web.sh`](scripts/build_web.sh),
+which self-hosts the pygbag runtime and adds a COOP/COEP service worker so the app is
+cross-origin isolated (GitHub Pages doesn't send those headers otherwise).
 
 Every push to `main` rebuilds this and deploys the live demo linked at the top to
 GitHub Pages.
