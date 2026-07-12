@@ -33,8 +33,16 @@ around `0.000%` even after thousands of steps.
 - **Famous presets** — the figure-eight choreography, the rotating Lagrange triangle and
   Euler collinear configurations, the Moth I periodic orbit, a sun-and-planets system, and
   a random generator.
-- **Fading orbit trails** and a live HUD (time, total energy, energy drift, FPS).
-- **Adjustable speed**, pause/resume, and reset — all from the keyboard.
+- **Auto-framing** — the camera follows the centre of mass and zooms so every body stays
+  in view, however far they wander.
+- **Speed-lit trails** that brighten where a body moves fast, plus a **trace mode** that
+  keeps the whole orbit (the figure-eight and Lagrange triangle draw themselves).
+- **Chaos twin** — spawn a copy nudged by ε and watch the two diverge: sensitive dependence
+  on initial conditions, made visible.
+- **Conserved-quantities panel** — live sparklines of energy, momentum and angular momentum
+  that stay flat, showing the symplectic integrator really does conserve them.
+- **Shareable orbits** — the browser build encodes the set-up in the page URL, so a link
+  reproduces a specific orbit.
 - **Tested physics** — the engine is decoupled from the graphics and covered by a headless
   `pytest` suite (energy conservation, momentum conservation, figure-eight periodicity…).
 
@@ -83,6 +91,11 @@ GitHub Pages.
 | Launch / pause | **Space** |
 | Simulation speed | **Up / Down** |
 | Load a preset | **1** figure-8 · **2** Lagrange · **3** sun · **4** random · **5** Euler · **6** moth |
+| Auto-frame (follow + zoom) | **A** |
+| Trace mode (keep the whole orbit) | **T** |
+| Chaos twin (ε-perturbed copy) | **G** |
+| Conserved-quantities panel | **P** |
+| Copy a shareable link | **U** |
 | Reset to set-up | **R** |
 | Toggle help / fullscreen | **H** / **F** |
 | Back to menu | **Esc** |
