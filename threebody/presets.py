@@ -66,6 +66,50 @@ def lagrange_triangle(radius: float = 1.0) -> Scenario:
     )
 
 
+def euler_collinear(a: float = 1.0) -> Scenario:
+    """Euler's collinear central configuration (three bodies on a rotating line).
+
+    Three equal masses sit at ``-a, 0, +a`` and rotate rigidly about the centre
+    like a spinning rod.  For this to be a relative equilibrium the angular speed
+    must satisfy ``omega^2 = (5/4) G m / a^3`` (the outer bodies feel a pull of
+    ``G m^2 / a^2`` from the centre plus ``G m^2 / (2a)^2`` from each other).
+    """
+    omega = np.sqrt(1.25 / a**3)  # G = m = 1
+    positions = [[-a, 0.0], [0.0, 0.0], [a, 0.0]]
+    velocities = [[0.0, -omega * a], [0.0, 0.0], [0.0, omega * a]]
+    system = System(positions, velocities, [1.0, 1.0, 1.0], G=1.0, softening=0.0)
+    return Scenario(
+        key="euler",
+        name="Euler Collinear",
+        description="Three masses on a line, rotating rigidly as a relative equilibrium",
+        system=system,
+        view_scale=210.0,
+    )
+
+
+def _suvakov(vx: float, vy: float, key: str, name: str, description: str) -> Scenario:
+    """Build an orbit in the Suvakov-Dmitrasinovic isosceles-collinear form.
+
+    Positions r1=(-1,0), r2=(1,0), r3=(0,0); velocities v1=v2=(vx,vy) and
+    v3=(-2vx,-2vy), which gives zero total momentum and zero angular momentum.
+    """
+    positions = [[-1.0, 0.0], [1.0, 0.0], [0.0, 0.0]]
+    velocities = [[vx, vy], [vx, vy], [-2.0 * vx, -2.0 * vy]]
+    system = System(positions, velocities, [1.0, 1.0, 1.0], G=1.0, softening=0.0)
+    return Scenario(key=key, name=name, description=description, system=system, view_scale=185.0)
+
+
+def moth() -> Scenario:
+    """The 'moth I' periodic orbit (Suvakov & Dmitrasinovic, 2013), period ~14.89."""
+    return _suvakov(
+        0.46444,
+        0.39606,
+        key="moth",
+        name="Moth I",
+        description="Suvakov-Dmitrasinovic periodic orbit (2013)",
+    )
+
+
 def sun_and_planets() -> Scenario:
     """A heavy central body with two lighter ones on near-circular orbits.
 
@@ -105,11 +149,13 @@ def random_cloud(seed: int | None = None) -> Scenario:
     )
 
 
-# Ordered so the UI can cycle through them predictably.
+# Ordered so the UI can cycle through them predictably (matches the number keys).
 PRESETS = {
     "figure_eight": figure_eight,
     "lagrange": lagrange_triangle,
     "sun_planets": sun_and_planets,
     "random": random_cloud,
+    "euler": euler_collinear,
+    "moth": moth,
 }
 PRESET_ORDER = list(PRESETS)

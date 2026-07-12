@@ -30,6 +30,8 @@ PRESET_KEYS = {
     pygame.K_2: presets.lagrange_triangle,
     pygame.K_3: presets.sun_and_planets,
     pygame.K_4: presets.random_cloud,
+    pygame.K_5: presets.euler_collinear,
+    pygame.K_6: presets.moth,
 }
 
 
@@ -242,7 +244,7 @@ class App:
                 self.scenario.description,
                 "",
                 "Left-drag a body: move    Right-drag: set velocity",
-                "Space: launch    1-4: presets    R: reset    H: help",
+                "Space: launch    1-6: presets    R: reset    H: help",
             ],
             font=self.font_hud,
         )
@@ -285,7 +287,8 @@ class App:
             "Controls",
             "  Left-drag body ....... move it",
             "  Right-drag body ...... set its velocity",
-            "  1 / 2 / 3 / 4 ........ figure-8 / Lagrange / sun / random",
+            "  1 2 3 ................ figure-8 / Lagrange / sun",
+            "  4 5 6 ................ random / Euler / moth",
             "  Space ................ launch / pause",
             "  Up / Down ............ simulation speed",
             "  R .................... reset to set-up",

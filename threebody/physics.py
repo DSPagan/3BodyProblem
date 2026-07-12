@@ -1,9 +1,9 @@
 """N-body gravitational physics.
 
 The engine is deliberately independent from pygame so it can be unit-tested
-without a display. It integrates Newtonian gravity with a *symplectic*
-velocity-Verlet (leapfrog) scheme, which conserves energy and linear momentum
-far better than a naive Euler step over long runs.
+without a display. It integrates Newtonian gravity with a *4th-order symplectic*
+scheme (Yoshida's composition of velocity-Verlet steps), which conserves energy
+and linear momentum far better than a naive Euler step over long runs.
 
 Acceleration on body ``i``:
 
@@ -19,6 +19,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 Array = NDArray[np.float64]
+
+# Yoshida (1990) 4th-order symplectic coefficients: a 4th-order step is the
+# composition  Verlet(w1·dt) ∘ Verlet(w0·dt) ∘ Verlet(w1·dt),  with 2·w1 + w0 = 1.
+_CBRT2 = 2.0 ** (1.0 / 3.0)
+_YOSHIDA_W1 = 1.0 / (2.0 - _CBRT2)
+_YOSHIDA_W0 = -_CBRT2 / (2.0 - _CBRT2)
 
 
 class System:
@@ -67,8 +73,8 @@ class System:
         # a_i = G Σ_j m_j * diff[i, j] * inv_r3[i, j]
         return self.G * np.einsum("j,ij,ijk->ik", self.mass, inv_r3, diff)
 
-    def step(self, dt: float) -> None:
-        """Advance the system by ``dt`` using velocity Verlet."""
+    def _verlet(self, dt: float) -> None:
+        """One symplectic velocity-Verlet (leapfrog) step. Works for dt < 0 too."""
         acc = self._acc
         self.pos += self.vel * dt + 0.5 * acc * dt * dt
         new_acc = self._accelerations(self.pos)
@@ -76,8 +82,21 @@ class System:
         self._acc = new_acc
         self.time += dt
 
+    def step(self, dt: float) -> None:
+        """Advance the system by ``dt`` with a 4th-order symplectic integrator.
+
+        This composes three velocity-Verlet sub-steps with Yoshida's coefficients
+        (Yoshida, 1990); the negative middle step is what cancels the 2nd-order
+        error. The result conserves energy far better than plain Verlet at the
+        same ``dt`` and keeps delicate periodic orbits (e.g. Moth I) stable, while
+        remaining symplectic and exactly momentum-conserving.
+        """
+        self._verlet(_YOSHIDA_W1 * dt)
+        self._verlet(_YOSHIDA_W0 * dt)
+        self._verlet(_YOSHIDA_W1 * dt)
+
     def substeps(self, dt: float, n: int) -> None:
-        """Run ``n`` Verlet steps of size ``dt`` (finer integration per frame)."""
+        """Run ``n`` integration steps of size ``dt`` (finer integration per frame)."""
         for _ in range(n):
             self.step(dt)
 

@@ -92,6 +92,33 @@ def test_lagrange_triangle_keeps_its_shape():
     assert max(abs(s - side0) for s in sides) < 0.02
 
 
+def test_euler_collinear_stays_rigid():
+    sys = presets.euler_collinear().system
+    d0 = [np.linalg.norm(sys.pos[i] - sys.pos[j]) for i, j in ((0, 1), (1, 2), (0, 2))]
+    for _ in range(4000):
+        sys.step(0.002)
+    d1 = [np.linalg.norm(sys.pos[i] - sys.pos[j]) for i, j in ((0, 1), (1, 2), (0, 2))]
+    # A relative equilibrium rotates as a rigid body: all separations constant.
+    assert max(abs(a - b) for a, b in zip(d0, d1, strict=True)) < 1e-3
+
+
+def test_moth_is_periodic_and_bounded():
+    scenario = presets.moth()
+    sys = scenario.system
+    start = sys.pos.copy()
+    period = 14.8939  # Suvakov-Dmitrasinovic 2013
+    dt = 0.003
+    max_extent = 0.0
+    for _ in range(5):  # integrate five full periods
+        for _ in range(round(period / dt)):
+            sys.step(dt)
+            max_extent = max(max_extent, np.max(np.abs(sys.pos - sys.center_of_mass())))
+    # Stays bounded (does not fly apart) thanks to the 4th-order integrator...
+    assert max_extent < 3.0
+    # ...and returns close to its start after a whole number of periods.
+    assert np.max(np.abs(sys.pos - start)) < 0.1
+
+
 def test_sun_and_planets_conserves_energy():
     sys = presets.sun_and_planets().system
     e0 = sys.total_energy()
