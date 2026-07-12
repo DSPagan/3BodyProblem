@@ -3,6 +3,7 @@
 [![CI](https://github.com/DSPagan/3BodyProblem/actions/workflows/ci.yml/badge.svg)](https://github.com/DSPagan/3BodyProblem/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Play in browser](https://img.shields.io/badge/%E2%96%B6%20play-in%20browser-brightgreen)](https://dspagan.github.io/3BodyProblem/)
 
 A real-time, interactive simulator of the gravitational **three-body problem** — three
 point masses orbiting one another under Newtonian gravity. Set up the initial conditions
@@ -12,6 +13,9 @@ three-body problem has no general closed-form solution, most configurations are
 different.
 
 ![The figure-eight choreography running in the simulator](docs/demo.gif)
+
+**▶ [Play it in your browser](https://dspagan.github.io/3BodyProblem/)** — no install
+required; the whole simulator runs client-side via WebAssembly (pygbag).
 
 The integrator is **symplectic** (velocity Verlet / leapfrog), so total energy stays
 essentially constant over long runs — you can watch the live energy-drift readout hover
@@ -52,6 +56,19 @@ python main.py
 ```
 
 Press **Start**, then drag the bodies to taste and hit **Space** to launch.
+
+### Run it in the browser
+
+The exact same code runs in the browser via [pygbag](https://pygame-web.github.io/),
+which compiles it to WebAssembly:
+
+```bash
+pip install pygbag
+pygbag main.py        # then open http://localhost:8000
+```
+
+Every push to `main` rebuilds this and deploys the live demo linked at the top to
+GitHub Pages.
 
 ## Controls
 

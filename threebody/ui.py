@@ -12,7 +12,13 @@ _FONT_CACHE: dict[tuple[str | None, int, bool], pygame.font.Font] = {}
 def get_font(size: int, *, bold: bool = False, name: str | None = None) -> pygame.font.Font:
     key = (name, size, bold)
     if key not in _FONT_CACHE:
-        font = pygame.font.SysFont(name, size, bold=bold)
+        if name is None:
+            # Default bundled font — works identically on desktop and in the
+            # browser (pygbag/WASM), where system fonts may be unavailable.
+            font = pygame.font.Font(None, size)
+            font.set_bold(bold)
+        else:
+            font = pygame.font.SysFont(name, size, bold=bold)
         _FONT_CACHE[key] = font
     return _FONT_CACHE[key]
 

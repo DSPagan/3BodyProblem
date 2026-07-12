@@ -11,6 +11,8 @@ PAUSED frozen mid-run
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import Callable
 
 import numpy as np
@@ -94,13 +96,16 @@ class App:
 
     # -- main loop --------------------------------------------------------
 
-    def run(self) -> None:
+    async def run_async(self) -> None:
+        """Main loop. Async so the same code runs on the desktop and in the
+        browser (pygbag/WebAssembly), where ``await`` yields to the page."""
         while self.running:
             for event in pygame.event.get():
                 self.handle_event(event)
             self.update()
             self.draw()
             self.clock.tick(60)
+            await asyncio.sleep(0)
         pygame.quit()
 
     def update(self) -> None:
@@ -121,7 +126,9 @@ class App:
             self.camera.width, self.camera.height = event.w, event.h
             return
         if event.type == pygame.KEYDOWN and event.key == pygame.K_f:
-            pygame.display.toggle_fullscreen()
+            # toggle_fullscreen isn't supported in the browser build.
+            with contextlib.suppress(pygame.error):
+                pygame.display.toggle_fullscreen()
             return
 
         if self.state == MENU:
@@ -310,7 +317,8 @@ class App:
 
 
 def main() -> None:
-    App().run()
+    """Synchronous entry point for the desktop app / console script."""
+    asyncio.run(App().run_async())
 
 
 if __name__ == "__main__":
