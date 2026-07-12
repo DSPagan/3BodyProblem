@@ -19,10 +19,41 @@ from collections.abc import Callable
 
 import pygame
 
-from . import presets, render, ui
+from . import presets, render, share, ui
 from .physics import System
 from .presets import Scenario
 from .vec import Vec2
+
+
+def _browser_window():
+    """The pygbag browser ``window`` object, or ``None`` on the desktop."""
+    try:
+        import platform  # pygbag injects platform.window in the browser build
+        return platform.window
+    except (ImportError, AttributeError):
+        return None
+
+
+def _read_share_token() -> str | None:
+    win = _browser_window()
+    if win is None:
+        return None
+    try:
+        h = str(win.location.hash)
+    except Exception:
+        return None
+    return h[3:] if h.startswith("#s=") else None
+
+
+def _write_share_token(token: str) -> bool:
+    win = _browser_window()
+    if win is None:
+        return False
+    try:
+        win.location.hash = "s=" + token
+        return True
+    except Exception:
+        return False
 
 MENU, EDIT, RUN, PAUSED = "menu", "edit", "run", "paused"
 
@@ -92,6 +123,8 @@ class App:
         self.ghost_trails: list[render.Trail] = []
         self.show_panel = False
         self.history: deque[tuple[float, float, float]] = deque(maxlen=240)
+        self._toast = ""
+        self._toast_t = 0  # frames the toast message stays up
 
         # EDIT interaction
         self.drag_pos: int | None = None
@@ -99,6 +132,12 @@ class App:
 
         menu_font = ui.get_font(46)
         self.start_button = ui.Button((size[0] // 2, 470), "START", menu_font)
+
+        # If opened via a shared link, jump straight into that orbit.
+        token = _read_share_token()
+        if token:
+            with contextlib.suppress(Exception):
+                self._load_shared(token)
 
     # -- scenario management ---------------------------------------------
 
@@ -145,6 +184,26 @@ class App:
                             G=self.sim.G, softening=self.sim.softening)
         self.ghost_trails = self._new_trails(self.ghost.n)
 
+    def _load_shared(self, token: str) -> None:
+        """Load a scenario from a share token and run it straight away."""
+        self.scenario = share.scenario_from_token(token)
+        self.current_factory = lambda: share.scenario_from_token(token)
+        self.camera = render.Camera(self.screen.get_size(), self.scenario.view_scale)
+        self.camera.center = self.scenario.system.center_of_mass()
+        self.start_run()
+
+    def _share(self) -> None:
+        """Put the current set-up in the page URL (browser) so it can be shared."""
+        if self.scenario is None:
+            return
+        token = share.encode(self.scenario.system)
+        if _write_share_token(token):
+            self._toast = "Shareable link updated - copy it from the address bar"
+        else:
+            self._toast = "Share token printed to the console"
+            print("Share token:", token)
+        self._toast_t = 160
+
     # -- main loop --------------------------------------------------------
 
     async def run_async(self) -> None:
@@ -160,6 +219,8 @@ class App:
         pygame.quit()
 
     def update(self) -> None:
+        if self._toast_t > 0:
+            self._toast_t -= 1
         if self.state == RUN and self.sim is not None:
             substeps = max(1, round(self.base_substeps * SPEEDS[self.speed_index]))
             self.sim.substeps(self.dt, substeps)
@@ -240,6 +301,8 @@ class App:
                 self.load_preset(self.preset_keys[event.key])
             elif event.key == pygame.K_r:
                 self.load_preset(self.current_factory)
+            elif event.key == pygame.K_u:
+                self._share()
         elif event.type == pygame.MOUSEBUTTONDOWN:
             idx = self._body_at(event.pos)
             if idx is not None:
@@ -275,6 +338,8 @@ class App:
             self._toggle_ghost()
         elif event.key == pygame.K_p:
             self.show_panel = not self.show_panel
+        elif event.key == pygame.K_u:
+            self._share()
         elif event.key in (pygame.K_UP, pygame.K_EQUALS, pygame.K_PLUS):
             self.speed_index = min(len(SPEEDS) - 1, self.speed_index + 1)
         elif event.key in (pygame.K_DOWN, pygame.K_MINUS):
@@ -309,6 +374,8 @@ class App:
             self._draw_edit()
         else:
             self._draw_sim(paused=self.state == PAUSED)
+        if self._toast_t > 0:
+            ui.draw_toast(self.screen, self._toast, self.font_hud)
         pygame.display.flip()
 
     def _draw_menu(self) -> None:
@@ -432,6 +499,7 @@ class App:
             "  T .................... trace mode (keep the orbit)",
             "  G .................... spawn a chaos twin",
             "  P .................... conserved-quantities panel",
+            "  U .................... copy a shareable link",
             "  R .................... reset to set-up",
             "  F .................... toggle fullscreen",
             "  H .................... hide this help",

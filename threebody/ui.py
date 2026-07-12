@@ -66,6 +66,23 @@ def draw_text_panel(
         screen.blit(font.render(line, True, color), (x, y + i * line_height))
 
 
+def draw_toast(
+    screen: pygame.Surface,
+    text: str,
+    font: pygame.font.Font,
+    color: tuple[int, int, int] = HUD_COLOR,
+) -> None:
+    """A transient centred message near the bottom of the screen."""
+    surf = font.render(text, True, color)
+    w, h = screen.get_size()
+    pad = 12
+    rect = surf.get_rect(center=(w // 2, h - 60))
+    bg = pygame.Surface((rect.width + 2 * pad, rect.height + 2 * pad), pygame.SRCALPHA)
+    bg.fill((0, 0, 0, 180))
+    screen.blit(bg, (rect.x - pad, rect.y - pad))
+    screen.blit(surf, rect)
+
+
 def draw_footer(
     screen: pygame.Surface,
     text: str,
